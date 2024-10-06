@@ -11,7 +11,6 @@ import {
 import { ExcelReaderService, MappingService } from './excel.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MappingDTO } from './dto/mapping.dto';
-import { plainToInstance } from 'class-transformer';
 import {
   ApiConsumes,
   ApiBody,
@@ -19,25 +18,26 @@ import {
   ApiResponse,
   ApiTags,
   ApiExtraModels,
-  getSchemaPath,
 } from '@nestjs/swagger';
+import { plainToInstance } from 'class-transformer';
 
 // Custom filter to check file type
 const excelFileFilter = (
-  req: any,
+  _: any,
   file: Express.Multer.File,
   callback: (error: Error | null, acceptFile: boolean) => void,
 ) => {
-  if (!file.originalname.match(/\.(xlsx|xls)$/)) {
-    return callback(
-      new BadRequestException('Only Excel files are allowed!'),
-      false,
-    );
-  }
-  callback(null, true);
+  const isExcelFile = file.originalname.match(/\.(xlsx|xls)$/);
+  callback(
+    isExcelFile
+      ? null
+      : new BadRequestException('Only Excel files are allowed!'),
+    Boolean(isExcelFile),
+  );
 };
 
 @ApiTags('excel')
+@ApiExtraModels(MappingDTO)
 @Controller('excel')
 export class ExcelController {
   constructor(
@@ -46,11 +46,7 @@ export class ExcelController {
   ) {}
 
   @Post('upload')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      fileFilter: excelFileFilter,
-    }),
-  )
+  @UseInterceptors(FileInterceptor('file', { fileFilter: excelFileFilter }))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload an Excel file and map it to JSON' })
   @ApiResponse({
@@ -61,7 +57,6 @@ export class ExcelController {
     status: 400,
     description: 'Invalid file type or bad request.',
   })
-  @ApiExtraModels(MappingDTO)
   @ApiBody({
     description: 'Excel file upload with optional mappings',
     schema: {
@@ -70,13 +65,14 @@ export class ExcelController {
         file: {
           type: 'string',
           format: 'binary',
+          description: 'The Excel file to be uploaded (.xls or .xlsx)',
         },
         mappings: {
-          type: 'array',
-          items: {
-            $ref: getSchemaPath(MappingDTO),
-          },
-          description: 'Mappings as an array of MappingDTO objects',
+          type: 'string',
+          example:
+            '[{"columnName": "Name", "fieldName": "fullName", "dataType": "string"}]',
+          description:
+            'Mappings as a JSON string representing an array of MappingDTO objects.',
         },
       },
     },
@@ -84,34 +80,24 @@ export class ExcelController {
   @HttpCode(HttpStatus.OK)
   async excelToObject(
     @UploadedFile() file: Express.Multer.File,
-    @Body('mappings') mappings: string,
+    @Body('mappings') mappings?: string,
   ): Promise<object> {
-    this.validateFile(file);
-    const mappingInstances = this.parseMappings(mappings);
-    const excelData = this.excelReaderService.readExcel(file);
-
-    return mappingInstances.length > 0
-      ? this.mappingService.applyMappings(excelData, mappingInstances)
-      : excelData;
-  }
-
-  private validateFile(file: Express.Multer.File): void {
     if (!file) {
       throw new BadRequestException('File is required!');
     }
+
+    const mappingInstances = mappings ? this.parseMappings(mappings) : [];
+    const excelData = this.excelReaderService.readExcel(file);
+    return this.mappingService.applyMappings(excelData, mappingInstances);
   }
 
   private parseMappings(mappings: string): MappingDTO[] {
-    if (!mappings) {
-      return [];
-    }
     try {
       const parsedMappings = JSON.parse(mappings);
-      if (Array.isArray(parsedMappings)) {
-        return plainToInstance(MappingDTO, parsedMappings);
-      } else {
+      if (!Array.isArray(parsedMappings)) {
         throw new BadRequestException('Mappings should be an array of objects');
       }
+      return plainToInstance(MappingDTO, parsedMappings);
     } catch {
       throw new BadRequestException('Invalid JSON format for mappings');
     }

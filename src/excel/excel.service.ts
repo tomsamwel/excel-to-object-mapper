@@ -16,22 +16,26 @@ export class ExcelReaderService {
 export class MappingService {
   applyMappings(data: any[], mappings: MappingDTO[]): any[] {
     return data.map((row) => {
-      const newRow = {};
+      const newRow = { ...row }; // Start with the original row data
+
       mappings.forEach((mapping) => {
         if (row.hasOwnProperty(mapping.columnName)) {
-          newRow[mapping.fieldName] = row[mapping.columnName];
           newRow[mapping.fieldName] = this.castDataType(
-            newRow[mapping.fieldName],
+            row[mapping.columnName],
             mapping.dataType,
           );
+          if (mapping.fieldName !== mapping.columnName) {
+            delete newRow[mapping.columnName]; // Remove original column if renamed
+          }
         }
       });
+
       return newRow;
     });
   }
 
   private castDataType(value: any, dataType: string): any {
-    switch (dataType.toLowerCase()) {
+    switch (dataType?.toLowerCase()) {
       case 'number':
         return Number(value);
       case 'string':
